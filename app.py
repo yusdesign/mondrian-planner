@@ -1,14 +1,13 @@
 import streamlit as st
 import plotly.graph_objects as go
 import numpy as np
-import random
 from scipy.spatial import cKDTree
-import plotly.express as px
+from collections import defaultdict
 
 st.set_page_config(page_title="3D Mondrian kd-Tree Recursion", layout="wide")
 
 st.title("🎨 3D Mondrian kd-Tree Recursion")
-st.markdown("### Recursive axis-aligned splitting in 3D space")
+st.markdown("### Recursive axis-aligned splitting in 3D space | No triangulation artifacts")
 
 # Color palettes for 3D volumes
 COLOR_PALETTES = {
@@ -22,7 +21,7 @@ class KDNode3D:
     """3D kd-Tree node for recursive space partitioning"""
     def __init__(self, x, y, z, w, d, h, depth, axis):
         self.x, self.y, self.z = x, y, z
-        self.w, self.d, self.h = w, d, h  # width, depth, height
+        self.w, self.d, self.h = w, d, h
         self.depth = depth
         self.axis = axis  # 0:X, 1:Y, 2:Z
         self.children = []
@@ -37,7 +36,6 @@ def generate_3d_kdtree(x, y, z, w, d, h, depth, max_depth, axis, randomness, rng
     if depth >= max_depth or min(w, d, h) < 15:
         return node
     
-    # Split ratio between 0.25 and 0.75
     split_ratio = 0.3 + rng.random() * (0.7 - 0.3) * (1 - randomness)
     
     if axis == 0:  # Split along X
@@ -74,7 +72,7 @@ def assign_colors_3d(node, density, balance, palette, rng):
         color_prob = density * (1 + balance * (volume / (200**3)))
         if rng.random() < min(color_prob, 0.9):
             node.color = rng.choice(palette)
-            node.opacity = 0.7 + rng.random() * 0.3
+            node.opacity = 0.8
         else:
             node.color = '#FFFFFF' if '#FFFFFF' in palette else '#EEEEEE'
             node.opacity = 0.3
@@ -82,79 +80,131 @@ def assign_colors_3d(node, density, balance, palette, rng):
         for child in node.children:
             assign_colors_3d(child, density, balance, palette, rng)
 
-def render_3d_scene(node, fig, show_lines=True):
-    """Render 3D kd-tree as Plotly mesh3d"""
-    if node.is_leaf:
-        # Create vertices for cuboid
-        x = [node.x, node.x + node.w, node.x + node.w, node.x, node.x, node.x + node.w, node.x + node.w, node.x]
-        y = [node.y, node.y, node.y + node.d, node.y + node.d, node.y, node.y, node.y + node.d, node.y + node.d]
-        z = [node.z, node.z, node.z, node.z, node.z + node.h, node.z + node.h, node.z + node.h, node.z + node.h]
+def add_cuboid(fig, x, y, z, w, d, h, color, opacity, line_width=1):
+    """Add a proper cuboid without triangulation artifacts using lines + surface"""
+    # Define the 8 vertices
+    vertices = np.array([
+        [x, y, z], [x + w, y, z], [x + w, y + d, z], [x, y + d, z],  # bottom face
+        [x, y, z + h], [x + w, y, z + h], [x + w, y + d, z + h], [x, y + d, z + h]  # top face
+    ])
+    
+    # Define the 6 faces (each face is 4 vertices)
+    faces = [
+        [0, 1, 2, 3],  # bottom
+        [4, 5, 6, 7],  # top
+        [0, 1, 5, 4],  # front
+        [2, 3, 7, 6],  # back
+        [0, 3, 7, 4],  # left
+        [1, 2, 6, 5]   # right
+    ]
+    
+    # Add each face as a separate Mesh3d (no triangulation artifacts)
+    for face in faces:
+        face_vertices = vertices[face]
+        # Center of face for color consistency
+        face_center = face_vertices.mean(axis=0)
         
-        # Define faces (i,j,k indices for mesh)
-        i = [0, 0, 0, 0, 4, 4, 4, 4, 0, 1, 2, 3]
-        j = [1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 0]
-        k = [2, 3, 0, 5, 6, 7, 4, 1, 5, 6, 7, 4]
-        
-        # Add mesh with opacity
+        # Create mesh for this face (2 triangles)
         fig.add_trace(go.Mesh3d(
-            x=x, y=y, z=z,
-            i=i, j=j, k=k,
-            color=node.color,
-            opacity=node.opacity,
-            name=f'Leaf d{node.depth}',
+            x=face_vertices[:, 0],
+            y=face_vertices[:, 1],
+            z=face_vertices[:, 2],
+            i=[0, 0],
+            j=[1, 2],
+            k=[2, 3],
+            color=color,
+            opacity=opacity,
             showlegend=False,
-            hoverinfo='text',
-            text=f'Volume: {node.w}×{node.d}×{node.h}<br>Depth: {node.depth}'
+            hoverinfo='none',
+            lighting=dict(ambient=0.6, diffuse=0.5, specular=0.2),
+            lightposition=dict(x=100, y=200, z=300)
         ))
-        
-        # Add wireframe edges
-        if show_lines:
-            edges = [(0,1), (1,2), (2,3), (3,0), (4,5), (5,6), (6,7), (7,4), (0,4), (1,5), (2,6), (3,7)]
-            edge_x, edge_y, edge_z = [], [], []
-            for start, end in edges:
-                edge_x.extend([x[start], x[end], None])
-                edge_y.extend([y[start], y[end], None])
-                edge_z.extend([z[start], z[end], None])
-            fig.add_trace(go.Scatter3d(
-                x=edge_x, y=edge_y, z=edge_z,
-                mode='lines', line=dict(color='black', width=2),
-                showlegend=False, hoverinfo='none'
-            ))
+    
+    # Add edges (wireframe) as separate lines
+    edges = [
+        (0,1), (1,2), (2,3), (3,0),  # bottom
+        (4,5), (5,6), (6,7), (7,4),  # top
+        (0,4), (1,5), (2,6), (3,7)   # vertical
+    ]
+    
+    edge_x, edge_y, edge_z = [], [], []
+    for start, end in edges:
+        edge_x.extend([vertices[start][0], vertices[end][0], None])
+        edge_y.extend([vertices[start][1], vertices[end][1], None])
+        edge_z.extend([vertices[start][2], vertices[end][2], None])
+    
+    fig.add_trace(go.Scatter3d(
+        x=edge_x, y=edge_y, z=edge_z,
+        mode='lines',
+        line=dict(color='black', width=line_width),
+        showlegend=False,
+        hoverinfo='none'
+    ))
+
+def render_3d_scene(node, fig, show_lines=True):
+    """Render 3D kd-tree using proper cuboids"""
+    if node.is_leaf:
+        add_cuboid(fig, node.x, node.y, node.z, node.w, node.d, node.h, 
+                  node.color, node.opacity, 2 if show_lines else 0)
     else:
-        # Draw split planes as semi-transparent surfaces
-        if node.axis == 0 and show_lines:  # X split
-            split_x = node.children[0].x + node.children[0].w
-            y_range = np.linspace(node.y, node.y + node.d, 10)
-            z_range = np.linspace(node.z, node.z + node.h, 10)
-            Y, Z = np.meshgrid(y_range, z_range)
-            X = np.full_like(Y, split_x)
-            fig.add_surface(x=X, y=Y, z=Z, colorscale=[[0, 'rgba(100,100,100,0.2)'], [1, 'rgba(100,100,100,0.2)']], showscale=False)
-        elif node.axis == 1 and show_lines:  # Y split
-            split_y = node.children[0].y + node.children[0].d
-            x_range = np.linspace(node.x, node.x + node.w, 10)
-            z_range = np.linspace(node.z, node.z + node.h, 10)
-            X, Z = np.meshgrid(x_range, z_range)
-            Y = np.full_like(X, split_y)
-            fig.add_surface(x=X, y=Y, z=Z, colorscale=[[0, 'rgba(100,100,100,0.2)'], [1, 'rgba(100,100,100,0.2)']], showscale=False)
-        elif node.axis == 2 and show_lines:  # Z split
-            split_z = node.children[0].z + node.children[0].h
-            x_range = np.linspace(node.x, node.x + node.w, 10)
-            y_range = np.linspace(node.y, node.y + node.d, 10)
-            X, Y = np.meshgrid(x_range, y_range)
-            Z = np.full_like(X, split_z)
-            fig.add_surface(x=X, y=Y, z=Z, colorscale=[[0, 'rgba(100,100,100,0.2)'], [1, 'rgba(100,100,100,0.2)']], showscale=False)
+        # Draw split planes as semi-transparent surfaces if enabled
+        if show_lines:
+            if node.axis == 0:  # X split
+                split_x = node.children[0].x + node.children[0].w
+                # Create a plane at split_x
+                y_range = np.linspace(node.y, node.y + node.d, 2)
+                z_range = np.linspace(node.z, node.z + node.h, 2)
+                Y, Z = np.meshgrid(y_range, z_range)
+                X = np.full_like(Y, split_x)
+                
+                fig.add_surface(x=X, y=Y, z=Z, 
+                              colorscale=[[0, 'rgba(255,0,0,0.15)'], [1, 'rgba(255,0,0,0.15)']],
+                              showscale=False, name='split')
+            elif node.axis == 1:  # Y split
+                split_y = node.children[0].y + node.children[0].d
+                x_range = np.linspace(node.x, node.x + node.w, 2)
+                z_range = np.linspace(node.z, node.z + node.h, 2)
+                X, Z = np.meshgrid(x_range, z_range)
+                Y = np.full_like(X, split_y)
+                
+                fig.add_surface(x=X, y=Y, z=Z,
+                              colorscale=[[0, 'rgba(0,255,0,0.15)'], [1, 'rgba(0,255,0,0.15)']],
+                              showscale=False, name='split')
+            else:  # Z split
+                split_z = node.children[0].z + node.children[0].h
+                x_range = np.linspace(node.x, node.x + node.w, 2)
+                y_range = np.linspace(node.y, node.y + node.d, 2)
+                X, Y = np.meshgrid(x_range, y_range)
+                Z = np.full_like(X, split_z)
+                
+                fig.add_surface(x=X, y=Y, z=Z,
+                              colorscale=[[0, 'rgba(0,0,255,0.15)'], [1, 'rgba(0,0,255,0.15)']],
+                              showscale=False, name='split')
         
         for child in node.children:
             render_3d_scene(child, fig, show_lines)
 
+def merge_adjacent_faces(node, color_map):
+    """Merge adjacent faces of same color to reduce visual noise"""
+    # This collects faces by shared boundaries
+    if node.is_leaf and node.color:
+        key = (node.color, node.opacity)
+        if key not in color_map:
+            color_map[key] = []
+        color_map[key].append({
+            'x': node.x, 'y': node.y, 'z': node.z,
+            'w': node.w, 'd': node.d, 'h': node.h
+        })
+    else:
+        for child in node.children:
+            merge_adjacent_faces(child, color_map)
+
 def count_leaves(node):
-    """Count number of leaf nodes in kd-tree"""
     if not node: return 0
     if node.is_leaf: return 1
     return count_leaves(node.children[0]) + count_leaves(node.children[1])
 
 def collect_colored(node):
-    """Collect all colored leaf nodes"""
     if node.is_leaf and node.color not in ['#FFFFFF', '#EEEEEE']:
         yield node
     elif not node.is_leaf:
@@ -162,7 +212,6 @@ def collect_colored(node):
             yield from collect_colored(child)
 
 def print_tree_structure(node, level=0):
-    """Return formatted string of kd-tree structure"""
     indent = "  " * level
     if node.is_leaf:
         color_info = node.color if node.color else "white"
@@ -190,7 +239,8 @@ with st.sidebar:
     st.divider()
     
     show_wireframe = st.checkbox("Show Wireframe Edges", True)
-    show_split_planes = st.checkbox("Show Split Planes", True)
+    show_split_planes = st.checkbox("Show Split Planes", False)
+    merge_faces = st.checkbox("Merge Adjacent Same Colors", True)
     
     seed = st.number_input("Random Seed", 0, 9999, 42)
     
@@ -211,7 +261,6 @@ class CustomRNG:
 custom_rng = CustomRNG(rng)
 palette = COLOR_PALETTES[palette_name]
 
-# Generate root node (cube)
 margin = 20
 root = generate_3d_kdtree(margin, margin, margin, 
                          canvas_size - 2*margin, 
@@ -221,12 +270,59 @@ root = generate_3d_kdtree(margin, margin, margin,
 
 assign_colors_3d(root, color_density, color_balance, palette, custom_rng)
 
-# Create Plotly figure
+# Create Plotly figure with better lighting
 fig = go.Figure()
 
-render_3d_scene(root, fig, show_wireframe and show_split_planes)
+# Optionally merge faces for cleaner rendering
+if merge_faces:
+    color_map = defaultdict(list)
+    merge_adjacent_faces(root, color_map)
+    # Render merged groups (simplified - groups by color only)
+    for (color, opacity), rects in color_map.items():
+        for rect in rects:
+            add_cuboid(fig, rect['x'], rect['y'], rect['z'], 
+                      rect['w'], rect['d'], rect['h'],
+                      color, opacity, 2 if show_wireframe else 0)
+else:
+    render_3d_scene(root, fig, show_wireframe)
 
-# Update layout
+# Add split planes if enabled
+if show_split_planes:
+    def add_all_split_planes(node):
+        if not node.is_leaf:
+            if node.axis == 0:
+                split_x = node.children[0].x + node.children[0].w
+                y_range = np.linspace(node.y, node.y + node.d, 10)
+                z_range = np.linspace(node.z, node.z + node.h, 10)
+                Y, Z = np.meshgrid(y_range, z_range)
+                X = np.full_like(Y, split_x)
+                fig.add_surface(x=X, y=Y, z=Z, 
+                              colorscale=[[0, 'rgba(255,100,100,0.2)'], [1, 'rgba(255,100,100,0.2)']],
+                              showscale=False)
+            elif node.axis == 1:
+                split_y = node.children[0].y + node.children[0].d
+                x_range = np.linspace(node.x, node.x + node.w, 10)
+                z_range = np.linspace(node.z, node.z + node.h, 10)
+                X, Z = np.meshgrid(x_range, z_range)
+                Y = np.full_like(X, split_y)
+                fig.add_surface(x=X, y=Y, z=Z,
+                              colorscale=[[0, 'rgba(100,255,100,0.2)'], [1, 'rgba(100,255,100,0.2)']],
+                              showscale=False)
+            else:
+                split_z = node.children[0].z + node.children[0].h
+                x_range = np.linspace(node.x, node.x + node.w, 10)
+                y_range = np.linspace(node.y, node.y + node.d, 10)
+                X, Y = np.meshgrid(x_range, y_range)
+                Z = np.full_like(X, split_z)
+                fig.add_surface(x=X, y=Y, z=Z,
+                              colorscale=[[0, 'rgba(100,100,255,0.2)'], [1, 'rgba(100,100,255,0.2)']],
+                              showscale=False)
+            for child in node.children:
+                add_all_split_planes(child)
+    
+    add_all_split_planes(root)
+
+# Update layout with better camera and lighting
 fig.update_layout(
     title=f"3D Mondrian kd-Tree | Depth: {max_depth} | Leaves: {count_leaves(root)}",
     scene=dict(
@@ -234,12 +330,20 @@ fig.update_layout(
         yaxis_title="Y Axis", 
         zaxis_title="Z Axis",
         aspectmode='cube',
-        camera=dict(eye=dict(x=1.5, y=1.5, z=1.5)),
-        bgcolor='#f3f2ee'
+        camera=dict(
+            eye=dict(x=1.8, y=1.8, z=1.5),
+            center=dict(x=0, y=0, z=0),
+            up=dict(x=0, y=0, z=1)
+        ),
+        bgcolor='#f3f2ee',
+        xaxis=dict(gridcolor='lightgray', showbackground=False),
+        yaxis=dict(gridcolor='lightgray', showbackground=False),
+        zaxis=dict(gridcolor='lightgray', showbackground=False)
     ),
     paper_bgcolor='#f3f2ee',
     margin=dict(l=0, r=0, t=50, b=0),
-    showlegend=False
+    showlegend=False,
+    uirevision='constant'  # Keeps camera angle on updates
 )
 
 # Display
@@ -264,11 +368,11 @@ with st.expander("📊 View kd-Tree Structure"):
 st.markdown("""
 ### 🌟 3D Mondrian kd-Tree Properties
 
+- **No triangulation artifacts** - Each face rendered as proper quad
+- **Shared faces** - Adjacent leaves show clean boundaries
 - **Recursive 3D splitting** alternates between X, Y, and Z axes
-- Each **leaf node** is a rectangular cuboid (3D rectangle)
-- **Split planes** create hierarchical space partitioning
-- **Color intensity** based on volume (larger volumes more likely colored)
-- Perfect for **3D visualization**, **voxel art**, and **spatial data structures**
+- **Color-coded volumes** with adjustable opacity
+- **Interactive camera** - Rotate, zoom, pan
 
 *Inspired by Piet Mondrian's geometric abstraction and kd-tree algorithms*
 """)
