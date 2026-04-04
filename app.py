@@ -122,21 +122,21 @@ def render_3d_scene(node, fig, show_lines=True):
             ))
     else:
         # Draw split planes as semi-transparent surfaces
-        if node.axis == 0:  # X split
+        if node.axis == 0 and show_lines:  # X split
             split_x = node.children[0].x + node.children[0].w
             y_range = np.linspace(node.y, node.y + node.d, 10)
             z_range = np.linspace(node.z, node.z + node.h, 10)
             Y, Z = np.meshgrid(y_range, z_range)
             X = np.full_like(Y, split_x)
             fig.add_surface(x=X, y=Y, z=Z, colorscale=[[0, 'rgba(100,100,100,0.2)'], [1, 'rgba(100,100,100,0.2)']], showscale=False)
-        elif node.axis == 1:  # Y split
+        elif node.axis == 1 and show_lines:  # Y split
             split_y = node.children[0].y + node.children[0].d
             x_range = np.linspace(node.x, node.x + node.w, 10)
             z_range = np.linspace(node.z, node.z + node.h, 10)
             X, Z = np.meshgrid(x_range, z_range)
             Y = np.full_like(X, split_y)
             fig.add_surface(x=X, y=Y, z=Z, colorscale=[[0, 'rgba(100,100,100,0.2)'], [1, 'rgba(100,100,100,0.2)']], showscale=False)
-        else:  # Z split
+        elif node.axis == 2 and show_lines:  # Z split
             split_z = node.children[0].z + node.children[0].h
             x_range = np.linspace(node.x, node.x + node.w, 10)
             y_range = np.linspace(node.y, node.y + node.d, 10)
@@ -148,9 +148,30 @@ def render_3d_scene(node, fig, show_lines=True):
             render_3d_scene(child, fig, show_lines)
 
 def count_leaves(node):
+    """Count number of leaf nodes in kd-tree"""
     if not node: return 0
     if node.is_leaf: return 1
     return count_leaves(node.children[0]) + count_leaves(node.children[1])
+
+def collect_colored(node):
+    """Collect all colored leaf nodes"""
+    if node.is_leaf and node.color not in ['#FFFFFF', '#EEEEEE']:
+        yield node
+    elif not node.is_leaf:
+        for child in node.children:
+            yield from collect_colored(child)
+
+def print_tree_structure(node, level=0):
+    """Return formatted string of kd-tree structure"""
+    indent = "  " * level
+    if node.is_leaf:
+        color_info = node.color if node.color else "white"
+        return f"{indent}📦 Leaf: {node.w}×{node.d}×{node.h} - {color_info}"
+    axis_name = ["X", "Y", "Z"][node.axis]
+    result = f"{indent}🔪 Split along {axis_name} (depth {node.depth})\n"
+    result += print_tree_structure(node.children[0], level + 1) + "\n"
+    result += print_tree_structure(node.children[1], level + 1)
+    return result
 
 # Sidebar controls
 with st.sidebar:
@@ -173,7 +194,7 @@ with st.sidebar:
     
     seed = st.number_input("Random Seed", 0, 9999, 42)
     
-    if st.button("🎲 Generate 3D kd-Tree", type="primary", use_container_width=True):
+    if st.button("🎲 Generate 3D kd-Tree", type="primary", width='stretch'):
         st.rerun()
 
 # Generate 3D scene
@@ -203,7 +224,7 @@ assign_colors_3d(root, color_density, color_balance, palette, custom_rng)
 # Create Plotly figure
 fig = go.Figure()
 
-render_3d_scene(root, fig, show_wireframe)
+render_3d_scene(root, fig, show_wireframe and show_split_planes)
 
 # Update layout
 fig.update_layout(
@@ -238,25 +259,7 @@ with col4:
 
 # kd-Tree structure display
 with st.expander("📊 View kd-Tree Structure"):
-    def print_tree(node, level=0):
-        indent = "  " * level
-        if node.is_leaf:
-            color_info = node.color if node.color else "white"
-            return f"{indent}📦 Leaf: {node.w}×{node.d}×{node.h} - {color_info}"
-        axis_name = ["X", "Y", "Z"][node.axis]
-        result = f"{indent}🔪 Split along {axis_name} (depth {node.depth})\n"
-        result += print_tree(node.children[0], level + 1) + "\n"
-        result += print_tree(node.children[1], level + 1)
-        return result
-    
-    st.code(print_tree(root), language="text")
-
-def collect_colored(node):
-    if node.is_leaf and node.color != '#FFFFFF' and node.color != '#EEEEEE':
-        yield node
-    elif not node.is_leaf:
-        for child in node.children:
-            yield from collect_colored(child)
+    st.code(print_tree_structure(root), language="text")
 
 st.markdown("""
 ### 🌟 3D Mondrian kd-Tree Properties
