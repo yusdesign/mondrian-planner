@@ -5,50 +5,9 @@ from scipy.spatial import cKDTree
 from collections import defaultdict
 import json
 import base64
-from PIL import Image, ImageDraw
-import io
-# Add at the top of app.py (after imports)
 import os
 from PIL import Image, ImageDraw, ImageFont
-
-def ensure_og_image():
-    """Auto-generate OG image if it doesn't exist"""
-    og_path = "og_image.png"
-    
-    if not os.path.exists(og_path):
-        # Create image
-        img = Image.new('RGB', (1200, 630), color='#f3f2ee')
-        draw = ImageDraw.Draw(img)
-        
-        # Draw Mondrian blocks
-        blocks = [
-            (50, 50, 350, 300, '#FF0000'),
-            (400, 50, 800, 200, '#0000FF'),
-            (850, 50, 1150, 250, '#FFFF00'),
-            (50, 350, 500, 580, '#FFFFFF'),
-            (550, 250, 900, 580, '#000000'),
-            (950, 300, 1150, 580, '#FF6B6B')
-        ]
-        
-        for x1, y1, x2, y2, color in blocks:
-            draw.rectangle([x1, y1, x2, y2], fill=color, outline='black', width=4)
-        
-        # Try to use a font, fallback to default
-        try:
-            font_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 52)
-            font_sub = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 32)
-        except:
-            font_title = ImageFont.load_default()
-            font_sub = ImageFont.load_default()
-        
-        draw.text((100, 500), "3D Mondrian kd-Tree", fill='#111', font=font_title)
-        draw.text((100, 560), "Recursive Axis-Aligned Splitting in 3D", fill='#444', font=font_sub)
-        
-        img.save(og_path)
-        print(f"✅ Auto-generated {og_path}")
-
-# Call this right after st.set_page_config
-ensure_og_image()
+import io
 
 # ==================== PAGE CONFIGURATION ====================
 st.set_page_config(
@@ -58,41 +17,15 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ==================== SOCIAL SHARING IMAGE ====================
-def create_og_image():
-    """Create Open Graph image for social sharing"""
-    img = Image.new('RGB', (1200, 630), color='#f3f2ee')
-    draw = ImageDraw.Draw(img)
-    
-    # Draw Mondrian-style blocks
-    blocks = [
-        (50, 50, 400, 300, '#FF0000'),
-        (450, 50, 800, 200, '#0000FF'),
-        (50, 350, 300, 580, '#FFFF00'),
-        (350, 250, 800, 400, '#FFFFFF'),
-        (850, 50, 1150, 300, '#000000'),
-        (850, 350, 1150, 580, '#FF6B6B')
-    ]
-    
-    for x1, y1, x2, y2, color in blocks:
-        draw.rectangle([x1, y1, x2, y2], fill=color, outline='black', width=3)
-    
-    # Add text
-    draw.text((100, 500), "3D Mondrian kd-Tree", fill='black', size=48)
-    draw.text((100, 560), "Recursive Axis-Aligned Splitting in 3D", fill='#333', size=32)
-    
-    return img
-
 # Set meta tags for social sharing
 st.markdown("""
-    <meta property="og:title" content="3D Mondrian kd-Tree Recursion">
-    <meta property="og:description" content="Interactive 3D visualization of recursive axis-aligned splitting inspired by Piet Mondrian">
-    <meta property="og:type" content="website">
-    <meta property="og:url" content="https://mondrian-planner.streamlit.app">
-    <meta property="og:image" content="https://mondrian-planner.streamlit.app/og_image.png">
+    <meta property="og:image" content="https://raw.githubusercontent.com/yusdesign/mondrian-planner/main/og_image.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="3D Mondrian kd-Tree">
-    <meta name="twitter:description" content="Generate beautiful 3D Mondrian-style recursive partitions">
+    <meta property="og:title" content="3D Mondrian kd-Tree Recursion">
+    <meta property="og:description" content="Interactive 3D visualization of recursive axis-aligned splitting">
+    <meta property="og:url" content="https://mondrian-planner.streamlit.app">
 """, unsafe_allow_html=True)
 
 # ==================== CUSTOM CSS ====================
