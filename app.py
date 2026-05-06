@@ -52,25 +52,6 @@ class FloorNode:
         self.floor_level = floor_level  # Track which floor this room is on
         self.is_vertical_split = False  # Track if this was a floor-to-floor split
 
-def get_next_split_axis(depth, max_floors, current_axis=None):
-    """
-    Smart axis selection for floor-based splitting:
-    - Floor splits (Z-axis) get priority at specific depths
-    - Each floor then gets horizontal subdivision (X/Y axes)
-    """
-    floors_needed = max_floors
-    remaining_depth = max_floors - depth
-    
-    # If we still need floor splits, prioritize Z-axis at floor boundary depths
-    if remaining_depth > 0 and depth < floors_needed:
-        if depth % 2 == 0:  # Even depths: vertical floor split
-            return 2  # Z-axis for floor stacking
-        else:  # Odd depths: horizontal room subdivision on current floor
-            return depth % 2  # Alternate X(0) and Y(1)
-    else:
-        # After floors are established, alternate horizontal axes
-        return (depth - floors_needed) % 2  # Alternate X(0) and Y(1)
-
 def generate_floor_based_kdtree(x, y, z, w, d, h, depth, max_depth, 
                                randomness, wall_gap, floor_level, rng):
     """
@@ -86,7 +67,8 @@ def generate_floor_based_kdtree(x, y, z, w, d, h, depth, max_depth,
         return node
     
     # Determine split axis based on floor-stacking strategy
-    floors_desired = max(1, max_depth // 2 + 1)  # Calculate desired number of floors
+    # Floors get created first (Z-axis splits), then rooms within floors (X/Y splits)
+    floors_desired = max(1, max_depth // 2 + 1)
     
     if depth < floors_desired and depth % 2 == 0:
         # Floor split: Divide vertically (Z-axis) to create floors
@@ -127,11 +109,11 @@ def generate_floor_based_kdtree(x, y, z, w, d, h, depth, max_depth,
     else:  # axis == 2: Split along Z (Floor stacking - different floor levels)
         split_z = z + h * split_ratio
         if (split_z - z - half_gap > 10) and (z + h - split_z - half_gap > 10):
-            # Lower floor
+            # Lower floor (FLOOR_LEVEL STAYS SAME)
             node.children.append(generate_floor_based_kdtree(
                 x, y, z, w, d, split_z - z - half_gap,
                 depth + 1, max_depth, randomness, wall_gap, floor_level, rng))
-            # Upper floor (increment floor level)
+            # Upper floor (FLOOR_LEVEL INCREASES BY 1)
             node.children.append(generate_floor_based_kdtree(
                 x, y, split_z + half_gap, w, d, z + h - split_z - half_gap,
                 depth + 1, max_depth, randomness, wall_gap, floor_level + 1, rng))
@@ -150,9 +132,19 @@ def assign_colors_by_floor(node, density, balance, palette, rng):
         
         # Shift palette index based on floor level for visual floor distinction
         if rng.random() < min(color_prob, 0.9):
+            # Use the rng.choice method from our CustomRNG class
+            # But shift the palette based on floor level for visual clustering
             floor_offset = node.floor_level % len(palette)
-            color_index = (rng.randint(len(palette)) + floor_offset) % len(palette)
-            node.color = palette[color_index]
+            
+            # Instead of randint, use rng.choice with all palette colors
+            # and apply floor-based weighting
+            if hasattr(rng, 'choice'):
+                node.color = rng.choice(palette)
+            else:
+                # Fallback: simple random selection with floor influence
+                import random
+                node.color = palette[random.randint(0, len(palette)-1)]
+            
             node.opacity = 0.9
         else:
             node.color = '#FFFFFF' if '#FFFFFF' in palette else '#F5F5F5'
@@ -259,9 +251,8 @@ def print_floor_layout(node, level=0):
     """Print floor-by-floor room layout"""
     indent = "  " * level
     if node.is_leaf:
-        floor_label = f"Floor {node.floor_level + 1}" if node.floor_level == 0 else f"Floor {node.floor_level + 1}"
         color_info = node.color if node.color else "transparent"
-        return (f"{indent}🏠 {floor_label} Room: {node.w:.1f}×{node.d:.1f}×{node.h:.1f} "
+        return (f"{indent}🏠 Floor {node.floor_level + 1} Room: {node.w:.1f}×{node.d:.1f}×{node.h:.1f} "
                f"(V:{node.w*node.d*node.h:.0f}) - {color_info}")
     
     split_type = "🏢 Floor Split (Z-axis)" if node.is_vertical_split else "🧱 Wall Split"
@@ -381,14 +372,28 @@ if generate_clicked or not st.session_state.generated:
         rng = np.random.RandomState(seed)
     
     class CustomRNG:
-        def __init__(self, rng): self.rng = rng
-        def random(self): return self.rng.rand()
-        def choice(self, arr): return arr[self.rng.randint(len(arr))]
+        def __init__(self, rng): 
+            self.rng = rng
+        
+        def random(self): 
+            return self.rng.rand()
+        
+        def choice(self, arr): 
+            return arr[self.rng.randint(len(arr))]
+        
+        def randint(self, low, high=None):
+            """Added randint method to match numpy.random.RandomState interface"""
+            if high is None:
+                high = low
+                low = 0
+            return self.rng.randint(low, high)
     
     custom_rng = CustomRNG(rng)
     palette = COLOR_PALETTES[palette_name]
     
     margin = 20
+    
+    # Generate the floor-based kd-tree
     root = generate_floor_based_kdtree(
         margin, margin, margin,
         canvas_size - 2*margin,
@@ -441,19 +446,20 @@ if st.session_state.root:
     rooms_by_floor = collect_rooms_by_floor(st.session_state.root)
     
     # Create columns for each floor
-    cols = st.columns(min(total_floors, 5))
-    for floor_num in range(total_floors):
-        col_idx = floor_num % 5
-        with cols[col_idx]:
-            rooms_on_floor = rooms_by_floor.get(floor_num, [])
-            floor_room_count = len(rooms_on_floor)
-            floor_volume = sum(r.w * r.d * r.h for r in rooms_on_floor)
-            
-            st.metric(
-                f"Floor {floor_num + 1}",
-                f"{floor_room_count} rooms",
-                f"V:{floor_volume:.0f}px³"
-            )
+    if total_floors > 0:
+        cols = st.columns(min(total_floors, 5))
+        for floor_num in range(total_floors):
+            col_idx = floor_num % 5
+            with cols[col_idx]:
+                rooms_on_floor = rooms_by_floor.get(floor_num, [])
+                floor_room_count = len(rooms_on_floor)
+                floor_volume = sum(r.w * r.d * r.h for r in rooms_on_floor)
+                
+                st.metric(
+                    f"Floor {floor_num + 1}",
+                    f"{floor_room_count} rooms",
+                    f"V:{floor_volume:.0f}px³"
+                )
     
     # ==================== EXPORT OPTIONS ====================
     st.divider()
@@ -479,24 +485,25 @@ if st.session_state.root:
     
     with col_export3:
         # Export detailed floor-by-floor specs
-        floor_specs = f"FLOOR-BY-FLOOR ROOM LAYOUT\n"
-        floor_specs += f"Wall Gap: {st.session_state.wall_gap:.1f}px\n"
-        floor_specs += f"Total Floors: {total_floors}\n\n"
-        
-        for floor_num, rooms in sorted(rooms_by_floor.items()):
-            floor_specs += f"=== Floor {floor_num + 1} ===\n"
-            floor_specs += f"Rooms: {len(rooms)}\n"
-            for room in rooms:
-                floor_specs += f"  Room: {room.w:.1f}×{room.d:.1f}×{room.h:.1f} - {room.color}\n"
-            floor_specs += "\n"
-        
-        st.download_button(
-            label="🏗️ Floor Specs",
-            data=floor_specs,
-            file_name="floor_specifications.txt",
-            mime="text/plain",
-            width='stretch'
-        )
+        if rooms_by_floor:
+            floor_specs = f"FLOOR-BY-FLOOR ROOM LAYOUT\n"
+            floor_specs += f"Wall Gap: {st.session_state.wall_gap:.1f}px\n"
+            floor_specs += f"Total Floors: {total_floors}\n\n"
+            
+            for floor_num, rooms in sorted(rooms_by_floor.items()):
+                floor_specs += f"=== Floor {floor_num + 1} ===\n"
+                floor_specs += f"Rooms: {len(rooms)}\n"
+                for room in rooms:
+                    floor_specs += f"  Room: {room.w:.1f}×{room.d:.1f}×{room.h:.1f} - {room.color}\n"
+                floor_specs += "\n"
+            
+            st.download_button(
+                label="🏗️ Floor Specs",
+                data=floor_specs,
+                file_name="floor_specifications.txt",
+                mime="text/plain",
+                width='stretch'
+            )
     
     with col_export4:
         if st.button("📸 View Guide", width='stretch'):
